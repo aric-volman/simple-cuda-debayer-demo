@@ -2,8 +2,8 @@
 #include <cuda_runtime.h>
 
 __global__ void bayer_to_rgb(
-unsigned char* in,
-unsigned char* out,
+    unsigned char* __restrict__ in,
+    unsigned char* __restrict__ out,
     int imgw,
     int imgh,
     int bpp,
@@ -19,61 +19,70 @@ unsigned char* out,
 
     if ((x + 2) < imgw && (x - 1) >= 0 && (y + 2) < imgh && (y - 1) >= 0) {
 
-        /* RED pixel */
-        out[(y+r.y)*elemCols + (x+r.x)*bpp + 0] =
-            in[(x+r.x) + (y+r.y)*imgw];
+        // Read bayer pixel at offset (dx, dy) from thread's base position (x, y)
+        auto bayer = [&](int dx, int dy) -> int {
+            return in[(x + dx) + (y + dy) * imgw];
+        };
 
-        out[(y+r.y)*elemCols + (x+r.x)*bpp + 1] =
-            (in[(x+r.x-1)+(y+r.y)*imgw] +
-             in[(x+r.x+1)+(y+r.y)*imgw] +
-             in[(x+r.x)+(y+r.y-1)*imgw] +
-             in[(x+r.x)+(y+r.y+1)*imgw]) / 4;
+        // Interpolation helpers: horizontal, vertical, 4-cardinal, 4-diagonal
+        auto h_avg = [&](int dx, int dy) -> unsigned char {
+            return (bayer(dx - 1, dy) + bayer(dx + 1, dy)) / 2;
+        };
+        auto v_avg = [&](int dx, int dy) -> unsigned char {
+            return (bayer(dx, dy - 1) + bayer(dx, dy + 1)) / 2;
+        };
+        auto cross_avg = [&](int dx, int dy) -> unsigned char {
+            // Horizontal neighbors (same row, likely L1-cached) before vertical
+            return (bayer(dx - 1, dy) + bayer(dx + 1, dy) +
+                    bayer(dx, dy - 1) + bayer(dx, dy + 1)) / 4;
+        };
+        auto diag_avg = [&](int dx, int dy) -> unsigned char {
+            // Top row before bottom row to stride through memory sequentially
+            return (bayer(dx - 1, dy - 1) + bayer(dx + 1, dy - 1) +
+                    bayer(dx - 1, dy + 1) + bayer(dx + 1, dy + 1)) / 4;
+        };
 
-        out[(y+r.y)*elemCols + (x+r.x)*bpp + 2] =
-            (in[(x+r.x-1)+(y+r.y-1)*imgw] +
-             in[(x+r.x+1)+(y+r.y-1)*imgw] +
-             in[(x+r.x-1)+(y+r.y+1)*imgw] +
-             in[(x+r.x+1)+(y+r.y+1)*imgw]) / 4;
+        // === Read phase ===
+        // Compute all 12 channel values before issuing any stores. Grouping
+        // all global loads together lets the GPU's memory scheduler coalesce
+        // and pipeline them across the warp without interleaving with stores.
 
-        /* GREEN on red row */
-        out[(y+gr.y)*elemCols + (x+gr.x)*bpp + 0] =
-            (in[(x+gr.x-1)+(y+gr.y)*imgw] +
-             in[(x+gr.x+1)+(y+gr.y)*imgw]) / 2;
+        /* RED pixel: R known, G cross-interpolated, B diag-interpolated */
+        unsigned char r_R = bayer(r.x, r.y);
+        unsigned char r_G = cross_avg(r.x, r.y);
+        unsigned char r_B = diag_avg(r.x, r.y);
 
-        out[(y+gr.y)*elemCols + (x+gr.x)*bpp + 1] =
-            in[(x+gr.x)+(y+gr.y)*imgw];
+        /* GREEN on red row: R horiz-interpolated, G known, B vert-interpolated */
+        unsigned char gr_R = h_avg(gr.x, gr.y);
+        unsigned char gr_G = bayer(gr.x, gr.y);
+        unsigned char gr_B = v_avg(gr.x, gr.y);
 
-        out[(y+gr.y)*elemCols + (x+gr.x)*bpp + 2] =
-            (in[(x+gr.x)+(y+gr.y-1)*imgw] +
-             in[(x+gr.x)+(y+gr.y+1)*imgw]) / 2;
+        /* GREEN on blue row: R vert-interpolated, G known, B horiz-interpolated */
+        unsigned char gb_R = v_avg(gb.x, gb.y);
+        unsigned char gb_G = bayer(gb.x, gb.y);
+        unsigned char gb_B = h_avg(gb.x, gb.y);
 
-        /* GREEN on blue row */
-        out[(y+gb.y)*elemCols + (x+gb.x)*bpp + 0] =
-            (in[(x+gb.x)+(y+gb.y-1)*imgw] +
-             in[(x+gb.x)+(y+gb.y+1)*imgw]) / 2;
+        /* BLUE pixel: R diag-interpolated, G cross-interpolated, B known */
+        unsigned char b_R = diag_avg(b.x, b.y);
+        unsigned char b_G = cross_avg(b.x, b.y);
+        unsigned char b_B = bayer(b.x, b.y);
 
-        out[(y+gb.y)*elemCols + (x+gb.x)*bpp + 1] =
-            in[(x+gb.x)+(y+gb.y)*imgw];
+        // === Write phase ===
+        // Writing 3 channels consecutively per pixel keeps each thread's stores
+        // in adjacent bytes. Pixel pairs on the same output row (r+gr, gb+b)
+        // share cache lines, so the write order matches the output layout.
+        auto write_pixel = [&](int px, int py,
+                               unsigned char rv, unsigned char gv, unsigned char bv) {
+            int base = (y + py) * elemCols + (x + px) * bpp;
+            out[base + 0] = rv;
+            out[base + 1] = gv;
+            out[base + 2] = bv;
+        };
 
-        out[(y+gb.y)*elemCols + (x+gb.x)*bpp + 2] =
-            (in[(x+gb.x-1)+(y+gb.y)*imgw] +
-             in[(x+gb.x+1)+(y+gb.y)*imgw]) / 2;
-
-        /* BLUE pixel */
-        out[(y+b.y)*elemCols + (x+b.x)*bpp + 0] =
-            (in[(x+b.x-1)+(y+b.y-1)*imgw] +
-             in[(x+b.x+1)+(y+b.y-1)*imgw] +
-             in[(x+b.x-1)+(y+b.y+1)*imgw] +
-             in[(x+b.x+1)+(y+b.y+1)*imgw]) / 4;
-
-        out[(y+b.y)*elemCols + (x+b.x)*bpp + 1] =
-            (in[(x+b.x-1)+(y+b.y)*imgw] +
-             in[(x+b.x+1)+(y+b.y)*imgw] +
-             in[(x+b.x)+(y+b.y-1)*imgw] +
-             in[(x+b.x)+(y+b.y+1)*imgw]) / 4;
-
-        out[(y+b.y)*elemCols + (x+b.x)*bpp + 2] =
-            in[(x+b.x)+(y+b.y)*imgw];
+        write_pixel(r.x,  r.y,  r_R,  r_G,  r_B);
+        write_pixel(gr.x, gr.y, gr_R, gr_G, gr_B);
+        write_pixel(gb.x, gb.y, gb_R, gb_G, gb_B);
+        write_pixel(b.x,  b.y,  b_R,  b_G,  b_B);
     }
 }
 
