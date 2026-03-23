@@ -37,4 +37,5 @@ Demo of program running:
 
 License: GNU GPL v2 as published by the Free Software Foundation
 Big credit for most kernel code: Avionic Design GmbH, [https://github.com/avionic-design/cuda-debayer/blob/master/src/bayer2rgb.cu](https://github.com/avionic-design/cuda-debayer/blob/master/src/bayer2rgb.cu)
+
 I had to simplify it but most logic remains the same.
