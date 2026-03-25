@@ -3,45 +3,57 @@ import numpy as np
 
 def debayer_2x2(bayer_img):
     """
-    Simple 2x2 debayer assuming RGGB pattern:
-    
-    R G
-    G B
+    Full-resolution 2x2 debayer (strict).
+    Uses only the 2x2 Bayer cell (no 3x3 interpolation).
 
-    Output is downsampled by 2x (H/2 × W/2), BGR format.
+    Assumes RGGB:
+        R G
+        G B
+
+    Output: same H×W, BGR
     """
     h, w = bayer_img.shape
 
-    # Ensure even dimensions
     if h % 2 != 0 or w % 2 != 0:
         raise ValueError("Image dimensions must be even")
 
-    # Convert to larger type to avoid overflow during averaging
-    bayer = bayer_img.astype(np.uint16)
+    b = bayer_img.astype(np.uint16)
 
-    # Reshape into 2x2 blocks
-    reshaped = bayer.reshape(h // 2, 2, w // 2, 2)
+    # Extract 2x2 blocks
+    R  = b[0::2, 0::2]
+    G1 = b[0::2, 1::2]
+    G2 = b[1::2, 0::2]
+    B  = b[1::2, 1::2]
 
-    # Extract RGGB components
-    # [[R, G],
-    #  [G, B]]
-    R  = reshaped[:, 0, :, 0]
-    G1 = reshaped[:, 0, :, 1]
-    G2 = reshaped[:, 1, :, 0]
-    B  = reshaped[:, 1, :, 1]
-
-    # Average the two green pixels safely
+    # Average green
     G = (G1 + G2) // 2
 
-    # Convert back to uint8
-    R = R.astype(np.uint8)
-    G = G.astype(np.uint8)
-    B = B.astype(np.uint8)
+    # Allocate full-resolution output
+    out = np.zeros((h, w, 3), dtype=np.uint8)
 
-    # Merge in BGR order (OpenCV)
-    return cv2.merge([B, G, R])
+    # Fill each position using ONLY the 2x2 block values
 
+    # Top-left (R location)
+    out[0::2, 0::2, 2] = R.astype(np.uint8)   # R
+    out[0::2, 0::2, 1] = G.astype(np.uint8)   # G
+    out[0::2, 0::2, 0] = B.astype(np.uint8)   # B
 
+    # Top-right (G location)
+    out[0::2, 1::2, 2] = R.astype(np.uint8)
+    out[0::2, 1::2, 1] = G.astype(np.uint8)
+    out[0::2, 1::2, 0] = B.astype(np.uint8)
+
+    # Bottom-left (G location)
+    out[1::2, 0::2, 2] = R.astype(np.uint8)
+    out[1::2, 0::2, 1] = G.astype(np.uint8)
+    out[1::2, 0::2, 0] = B.astype(np.uint8)
+
+    # Bottom-right (B location)
+    out[1::2, 1::2, 2] = R.astype(np.uint8)
+    out[1::2, 1::2, 1] = G.astype(np.uint8)
+    out[1::2, 1::2, 0] = B.astype(np.uint8)
+
+    return out
 def demosaic_bayer(raw_path, output_path, pattern="RGGB"):
     """
     Convert a Bayer RAW image (single channel) back to a color image.
