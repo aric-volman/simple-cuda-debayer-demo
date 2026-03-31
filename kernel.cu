@@ -1,7 +1,10 @@
 #include "kernel.cuh"
 #include <cuda_runtime.h>
 
-#define BLOCK_X 64
+// 87.43% throughput for 32 vs 61.20% for 64 (26% better)
+// ~57 micros on RTX 5060 vs. ~80 micros on RTX 5060
+// Might have to tune for 64 on jetson nano
+#define BLOCK_X 32 // Use 32 for much better occupancy
 #define BLOCK_Y 16
 
 // Clamp helper: clamps and ensures a non-negative value
@@ -32,7 +35,7 @@ __device__ __forceinline__ unsigned int avgTwo(int a, int b)
 }
 
 __global__ void bayer_to_rgb(
-    const unsigned char *__restrict__ in,
+    unsigned char *__restrict__ in,
     unsigned char *__restrict__ out,
     int width,
     int height)
