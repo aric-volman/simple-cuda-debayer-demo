@@ -104,7 +104,7 @@ __global__ void bayer_to_rgb(
     int x_odd = x & 1;
 
     int y_odd = y & 1;
-    int y_even = y & 0;
+    int y_even = 1 - y_odd;
 
     int is_red  = (!x_odd) & (!y_odd); // 1 or 0
     int is_blue = (x_odd) & (y_odd); // 1 or 0
