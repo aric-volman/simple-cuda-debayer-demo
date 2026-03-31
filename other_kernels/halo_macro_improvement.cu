@@ -31,6 +31,32 @@ __device__ __forceinline__ unsigned int avgTwo(int a, int b)
     return (a + b) >> 1;
 }
 
+__device__ __forceinline__ unsigned char load_pixel_halo(
+    const uchar4* __restrict__ in4,
+    int gx, int gy,
+    int width,
+    int height)
+{
+    // Clamp coordinates (handles halo safely)
+    gx = max(0, min(gx, width  - 1));
+    gy = max(0, min(gy, height - 1));
+
+    // Align x to 4-byte boundary
+    int gx4 = gx & ~3;
+
+    // Ensure vector load stays in row bounds
+    gx4 = min(gx4, width - 4);
+
+    // Compute linear index (in pixels)
+    int idx = gy * width + gx4;
+
+    // Load 4 pixels at once
+    uchar4 v = in4[idx >> 2];
+
+    // Extract the correct byte
+    return ((unsigned char*)&v)[gx - gx4];
+}
+
 __global__ void bayer_to_rgb(
     const unsigned char *__restrict__ in,
     unsigned char *__restrict__ out,
@@ -59,37 +85,31 @@ __global__ void bayer_to_rgb(
     // Clamp to multiple of 4
     int gx4 = (gx / 4) * 4;
 
-    // Handle boundary case (rogue multiple of 4)
+    // Handle boundary case
     gx4 = min(gx4, width - 4);
 
     // Load a four pixel vector with index divided by 4 (>> 2)
     // Index aligned with multiple of 4
-    // Our loads are divisible by 4 so vector loading works
-    // Basically this code flattens to 1D and then makes a new multiple
     uchar4 v = in4[(gy * width + gx4) >> 2];
     
     // In this thread retrieve pixel
-    // Subtracts the current gx by the multiple to get the current remainder
-    // It is a crude way of getting the remainder
-    // I.e. if gx is 6 and gx4 is 4, then the remainder is 2
     unsigned char pixel = ((unsigned char*)&v)[gx - gx4];
     
     // Load pixel
     tile[sy][sx] = pixel;
 
     // Load halo (edges)
-    // This part is negligible in my opinion
     if (threadIdx.x == 0)
-        tile[sy][0] = index2D(in, clamp(x - 1, width - 1), gy, width);
+        tile[sy][0] = load_pixel_halo(in4, x - 1, y, width, height);
 
     if (threadIdx.x == BLOCK_X - 1)
-        tile[sy][BLOCK_X + 1] = index2D(in, clamp(x + 1, width - 1), gy, width);
+        tile[sy][BLOCK_X + 1] = load_pixel_halo(in4, x + 1, y, width, height);
 
     if (threadIdx.y == 0)
-        tile[0][sx] = index2D(in, gx, clamp(y - 1, height - 1), width);
+        tile[0][sx] = load_pixel_halo(in4, x, y - 1, width, height);
 
     if (threadIdx.y == BLOCK_Y - 1)
-        tile[BLOCK_Y + 1][sx] = index2D(in, gx, clamp(y + 1, height - 1), width);
+        tile[BLOCK_Y + 1][sx] = load_pixel_halo(in4, x, y + 1, width, height);
         
     // Ensure that all threads are synced up after data transfer + halo creation
     __syncthreads();

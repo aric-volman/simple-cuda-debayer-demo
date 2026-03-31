@@ -1,0 +1,1 @@
+NOTE: These are past or experimental kernels. Look at the original optimization for original halo loading. Currently I have vector loading in kernel.cu. The other file has vectorized loading for the halo too (which is overkill).

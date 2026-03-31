@@ -37,8 +37,6 @@ __global__ void bayer_to_rgb(
     int width,
     int height)
 {
-    const uchar4* __restrict__ in4 = reinterpret_cast<const uchar4*>(in);
-
     // Global coordinates
     int x = blockIdx.x * BLOCK_X + threadIdx.x;
     int y = blockIdx.y * BLOCK_Y + threadIdx.y;
@@ -55,30 +53,12 @@ __global__ void bayer_to_rgb(
     // Load pixel in the center of the flower pattern (3x3 debayer pattern)
     int gx = clamp(x, width - 1);
     int gy = clamp(y, height - 1);
-
-    // Clamp to multiple of 4
-    int gx4 = (gx / 4) * 4;
-
-    // Handle boundary case (rogue multiple of 4)
-    gx4 = min(gx4, width - 4);
-
-    // Load a four pixel vector with index divided by 4 (>> 2)
-    // Index aligned with multiple of 4
-    // Our loads are divisible by 4 so vector loading works
-    // Basically this code flattens to 1D and then makes a new multiple
-    uchar4 v = in4[(gy * width + gx4) >> 2];
-    
-    // In this thread retrieve pixel
-    // Subtracts the current gx by the multiple to get the current remainder
-    // It is a crude way of getting the remainder
-    // I.e. if gx is 6 and gx4 is 4, then the remainder is 2
-    unsigned char pixel = ((unsigned char*)&v)[gx - gx4];
-    
-    // Load pixel
-    tile[sy][sx] = pixel;
+    // This should coallesce better because it will coallesce in parallel
+    // This is defined as one pixel per thread
+    // Each thread loads this singular pixel
+    tile[sy][sx] = in[gy * width + gx];
 
     // Load halo (edges)
-    // This part is negligible in my opinion
     if (threadIdx.x == 0)
         tile[sy][0] = index2D(in, clamp(x - 1, width - 1), gy, width);
 
