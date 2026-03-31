@@ -6,6 +6,12 @@
 
 int main()
 {
+    int numberOfTimes = 1;
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
     cv::Mat img = cv::imread("galaxy_raw.png",  cv::IMREAD_GRAYSCALE);
 
     if (img.empty())
@@ -30,11 +36,25 @@ int main()
     // Allocate output image
     unsigned char* d_debayer;
     cudaMalloc(&d_debayer, size_debayer);
-    
-    // Call CUDA wrapper
-    debayer_cuda(d_img, d_debayer, width, height);
-    
-    cudaDeviceSynchronize();
+
+    // Start measuring time
+    cudaEventRecord(start, 0);
+
+    for (int i = 0; i < numberOfTimes; i++) {
+        // Call CUDA wrapper
+        debayer_cuda(d_img, d_debayer, width, height);
+
+        cudaDeviceSynchronize();
+    }
+
+        // Stop measuring time
+    cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop); // Wait for the event to be recorded
+
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+    std::cout << "Kernel took on average: " << milliseconds/((double)numberOfTimes) << " ms" << std::endl;
 
     cv::Mat output(height, width, CV_8UC3);
 
@@ -50,6 +70,9 @@ int main()
 
     cudaFree(d_img);
     cudaFree(d_debayer);
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
     return 0;
 }
