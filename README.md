@@ -5,7 +5,8 @@ This is a quick demo for debayering using CUDA. Assumes RGGB pattern but can be 
 
 How to build (must have CUDA toolkit installed):
 ```bash
-nvcc main.cpp kernel.cu -o a.o `pkg-config --cflags --libs opencv4`
+nvcc main.cpp -I/usr/include/opencv4/ kernel.cu -L/usr/local/lib -lopencv_core -lopencv_imgproc
+
 ```
 
 How to run:
